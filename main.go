@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
-	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Client server architecture
@@ -18,28 +21,90 @@ import (
 // between many clients
 // config file for what ips the clients are ?
 
-func handleConnection(c net.Conn) {
-	fmt.Printf("Serving %s\n", c.RemoteAddr().String())
+var (
+	uniqueIPs = make(map[string]struct{})
+	mu        sync.Mutex
+)
+
+func pingClient(c net.Conn, err_chan chan bool) {
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		netData, err := bufio.NewReader(c).ReadString('\n')
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		select {
+		case <-ticker.C:
+			fmt.Println("sending ping")
+			result := "ping" + "\n"
 
-		temp := strings.TrimSpace(string(netData))
-		fmt.Println("Got message ", temp)
-		if temp == "STOP" {
-			break
-		}
+			_, err := c.Write([]byte(string(result)))
+			if err != nil {
+				fmt.Println("Write error")
+				fmt.Println(err)
+				err_chan <- true
+				return
+			}
+			c.SetDeadline(time.Now().Add(time.Second * 2))
+			netData, err := bufio.NewReader(c).ReadString('\n')
 
-		result := strconv.Itoa(122) + "\n"
-		c.Write([]byte(string(result)))
+			if err != nil {
+				fmt.Println("no ping response here")
+				fmt.Println(err)
+				err_chan <- true
+				return
+			}
+
+			temp := strings.TrimSpace(string(netData))
+			slog.Info(temp)
+		}
 	}
-	c.Close()
+}
+
+// inside here need to handle pinging every once in a while,
+// if no response then should consider the connection dead
+func handleConnection(c net.Conn) {
+
+	mu.Lock()
+
+	ip := c.RemoteAddr().String()
+	if _, exists := uniqueIPs[ip]; !exists {
+		fmt.Println("New unique IP connected:", ip)
+		uniqueIPs[ip] = struct{}{}
+	}
+	mu.Unlock()
+
+	err_chan := make(chan bool)
+
+	fmt.Printf("Serving %s\n", c.RemoteAddr().String())
+	go pingClient(c, err_chan)
+	/*
+		for {
+			netData, err := bufio.NewReader(c).ReadString('\n')
+			if err != nil {
+				fmt.Println("exiting here")
+				fmt.Println(err)
+				return
+			}
+
+			temp := strings.TrimSpace(string(netData))
+			slog.Info(temp)
+			if temp == "STOP" {
+				break
+			}
+
+		}
+	*/
+	defer c.Close()
+	<-err_chan
+	fmt.Println("closing this conn")
+	mu.Lock()
+	delete(uniqueIPs, ip)
+	fmt.Println("IP removed:", ip)
+	mu.Unlock()
 }
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	serverport := flag.String("serverport", "", "port of the command and control server")
 	serverip := flag.String("serverip", "", "ip of command and control server")
 	server := flag.Bool("server", false, "bool controlling whether this process should be client or server")
@@ -61,6 +126,11 @@ func main() {
 				fmt.Println(err)
 				return
 			}
+
+			fmt.Println("Connected ips")
+			for k, _ := range uniqueIPs {
+				fmt.Printf("ip %s\n", k)
+			}
 			go handleConnection(c)
 		}
 
@@ -80,20 +150,36 @@ func main() {
 			os.Exit(1)
 		}
 
-		_, err = conn.Write([]byte("test\n"))
+		_, err = conn.Write([]byte("hello ready to work\n"))
 		if err != nil {
 			println("Write to server failed:", err.Error())
 			os.Exit(1)
 		}
 
 		reply := make([]byte, 1024)
+		for range 5 {
 
-		_, err = conn.Read(reply)
-		if err != nil {
-			fmt.Println("Write to server failed:", err.Error())
-			os.Exit(1)
+			_, err = conn.Read(reply)
+			if err != nil {
+				fmt.Println("Read from server failed:", err.Error())
+				os.Exit(1)
+			}
+			fmt.Println("reply from server=", strings.TrimSpace(string(reply)))
+			if string(bytes.Trim(reply, "\x00")) == "ping\n" {
+				// respond to ping
+				fmt.Println("Responding to ping")
+				_, err = conn.Write([]byte("pong\n"))
+				if err != nil {
+					println("Write to server failed:", err.Error())
+					os.Exit(1)
+				}
+
+			}
+
 		}
-		fmt.Println("reply from server=", string(reply))
+		for {
+
+		}
 		conn.Close()
 
 	}
