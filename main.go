@@ -91,7 +91,7 @@ func acceptTask(c net.Conn, errChan chan bool) {
 func readResponses(c net.Conn, errChan chan bool) {
 	reader := bufio.NewReader(c)
 	for {
-		c.SetReadDeadline(time.Now().Add(10 * time.Second))
+		//c.SetReadDeadline(time.Now().Add(10 * time.Second))
 		netData, err := reader.ReadString('\n')
 		if err != nil {
 			fmt.Println("No response from client:", err)
@@ -257,7 +257,7 @@ func main() {
 				fmt.Println("Got number", task_num)
 				working = true
 
-				time.Sleep(time.Duration(time.Second * 2))
+				time.Sleep(time.Duration(time.Second * 20))
 				fmt.Println("Completed task ")
 				working = false
 				message_to_server := fmt.Sprintf("completed task %d\n", task_num)
