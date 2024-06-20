@@ -193,7 +193,7 @@ func main() {
 	fmt.Println("serverport:", *serverport)
 	if *server {
 		// host tcp server
-		l, err := net.Listen("tcp", "localhost:"+*serverport)
+		l, err := net.Listen("tcp", "0.0.0.0:"+*serverport)
 		if err != nil {
 			fmt.Println(err)
 			return
